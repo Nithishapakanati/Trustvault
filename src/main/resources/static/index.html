@@ -1,0 +1,237 @@
+﻿<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TrustVault</title><style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#1e293b}.hero{background:linear-gradient(120deg,#102a43,#176b87);color:white;padding:28px 7%}.hero h1{margin:0 0 8px}.hero p{margin:0;color:#d7edf5}.wrap{max-width:1000px;margin:24px auto;padding:0 18px}.card{background:white;border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 5px 20px #102a4310}h2{margin-top:0;font-size:20px}input,textarea,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #cbd5e1}input,textarea{width:100%;margin:6px 0 12px}textarea{min-height:80px}button{background:#176b87;color:white;border:0;cursor:pointer;margin:3px}button.secondary{background:#475569}.row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.item{border:1px solid #e2e8f0;padding:12px;border-radius:10px;margin:8px 0}.muted{color:#64748b;font-size:13px}pre{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:650px){.row{grid-template-columns:1fr}}
+</style></head><body><header class="hero"><h1>ðŸ” TrustVault</h1><p>Secure document sharing with permission management and audit history</p></header><main class="wrap"><section class="card"><h2>Sign in</h2><p class="muted">Demo accounts: owner / Owner@123 Â· viewer / Viewer@123</p><label>Username</label><input id="username" value="owner"><label>Password</label><input id="password" type="password" value="Owner@123"><button onclick="login()">Sign in</button><button class="secondary" onclick="logout()">Sign out</button><span id="status" class="muted"></span></section><div class="row"><section class="card"><h2>Create a document</h2><label>Title</label><input id="title" placeholder="Document title"><label>Text content</label><textarea id="content" placeholder="Enter demo document text"></textarea><button onclick="createDoc()">Create document</button></section><section class="card"><h2>Share / revoke access</h2><label>Document ID</label><input id="docId" type="number" placeholder="For example, 1"><label>Recipient username</label><input id="recipient" value="viewer"><button onclick="shareDoc()">Grant read access</button><button class="secondary" onclick="revokeDoc()">Revoke access</button></section></div><section class="card"><h2>My accessible documents</h2><button onclick="loadDocs()">Refresh documents</button><div id="docs"></div></section><section class="card"><h2>Audit history</h2><button onclick="loadAudit()">Refresh audit</button><div id="audit"></div></section><section class="card"><h2>API overview</h2><p class="muted">REST endpoints are documented in README.md. The API uses HTTP Basic authentication in this local demo.</p></section></main><section class="card">
+<h2>Upload a file from your computer</h2>
+<p class="muted">Choose a file up to 10 MB to store it in TrustVault.</p>
+<label for="uploadTitle">Document title (optional)</label>
+<input id="uploadTitle" type="text" maxlength="240" placeholder="Enter a title">
+<label for="fileInput">Choose file</label>
+<input id="fileInput" type="file">
+<button onclick="uploadFile()">Upload selected file</button>
+<p id="uploadNotice" class="muted"></p>
+</section>
+<script>
+let auth = '';
+
+async function api(path, method = 'GET', body) {
+    if (!auth) throw Error('Please sign in first.');
+    const options = {
+        method,
+        headers: { 'Authorization': 'Basic ' + auth }
+    };
+    if (body !== undefined) {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(body);
+    }
+    const r = await fetch('/api' + path, options);
+    if (!r.ok) throw Error(await r.text() || ('Request failed: ' + r.status));
+    if (r.status === 204) return null;
+    return r.json();
+}
+
+function login() {
+    auth = btoa(
+        document.getElementById('username').value + ':' +
+        document.getElementById('password').value
+    );
+    document.getElementById('status').textContent =
+        'Signed in as ' + document.getElementById('username').value;
+    loadDocs().catch(showError);
+    loadAudit().catch(showError);
+}
+
+function logout() {
+    auth = '';
+    document.getElementById('status').textContent = 'Signed out';
+    document.getElementById('docs').innerHTML = '';
+    document.getElementById('audit').innerHTML = '';
+}
+
+function showError(e) {
+    alert(e.message || String(e));
+}
+
+async function createDoc() {
+    try {
+        const d = await api('/documents', 'POST', {
+            title: document.getElementById('title').value,
+            content: document.getElementById('content').value
+        });
+        document.getElementById('docId').value = d.id;
+        document.getElementById('title').value = '';
+        document.getElementById('content').value = '';
+        await loadDocs();
+        await loadAudit();
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function uploadFile() {
+    try {
+        if (!auth) throw Error('Please sign in first.');
+
+        const input = document.getElementById('fileInput');
+        const file = input.files[0];
+
+        if (!file) throw Error('Please click Choose file and select a file.');
+        if (file.size > 10 * 1024 * 1024) {
+            throw Error('The maximum file size is 10 MB.');
+        }
+
+        const form = new FormData();
+        form.append('file', file);
+
+        const title = document.getElementById('uploadTitle').value.trim();
+        if (title) form.append('title', title);
+
+        const notice = document.getElementById('uploadNotice');
+        notice.textContent = 'Uploading...';
+
+        const r = await fetch('/api/documents/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Basic ' + auth },
+            body: form
+        });
+
+        if (!r.ok) throw Error(await r.text() || ('Upload failed: ' + r.status));
+
+        const d = await r.json();
+        notice.textContent = 'Uploaded successfully! Document ID: ' + d.id;
+        input.value = '';
+        document.getElementById('uploadTitle').value = '';
+
+        await loadDocs();
+        await loadAudit();
+    } catch (e) {
+        document.getElementById('uploadNotice').textContent = '';
+        showError(e);
+    }
+}
+
+async function downloadFile(id) {
+    try {
+        if (!auth) throw Error('Please sign in first.');
+
+        const r = await fetch('/api/documents/' + id + '/download', {
+            headers: { 'Authorization': 'Basic ' + auth }
+        });
+
+        if (!r.ok) throw Error(await r.text() || ('Download failed: ' + r.status));
+
+        const blob = await r.blob();
+        const cd = r.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+        let name = 'download';
+        if (match) {
+            try {
+                name = decodeURIComponent(match[1] || match[2]);
+            } catch (_) {
+                name = match[2] || 'download';
+            }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        await loadAudit();
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function loadDocs() {
+    try {
+        const items = await api('/documents');
+        document.getElementById('docs').innerHTML =
+            items.map(d => {
+                const details = d.fileName
+                    ? '<p class="muted">File: ' + esc(d.fileName) +
+                      ' (' + esc(d.fileSize) + ' bytes)</p>' +
+                      '<button onclick="downloadFile(' + d.id + ')">Download file</button>'
+                    : '<p>' + esc(d.content) + '</p>';
+
+                return '<div class="item"><b>#' + d.id + ' - ' +
+                    esc(d.title) + '</b>' + details +
+                    '<span class="muted">Owner: ' + esc(d.ownerUsername) +
+                    ' | Created: ' + new Date(d.createdAt).toLocaleString() +
+                    '</span><br><button onclick="viewDoc(' + d.id +
+                    ')">Open</button><button class="secondary" onclick="' +
+                    "document.getElementById('docId').value=" + d.id +
+                    '">Use ID</button></div>';
+            }).join('') || '<p>No documents yet.</p>';
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function viewDoc(id) {
+    try {
+        const d = await api('/documents/' + id);
+        alert('Document: ' + d.title + '\n\n' + d.content);
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function shareDoc() {
+    try {
+        await api('/documents/' +
+            document.getElementById('docId').value + '/share', 'POST', {
+                recipientUsername: document.getElementById('recipient').value
+            });
+        alert('Read access granted.');
+        await loadAudit();
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function revokeDoc() {
+    try {
+        await api('/documents/' +
+            document.getElementById('docId').value + '/share/' +
+            encodeURIComponent(document.getElementById('recipient').value),
+            'DELETE');
+        alert('Access revoked.');
+        await loadAudit();
+        await loadDocs();
+    } catch (e) {
+        showError(e);
+    }
+}
+
+async function loadAudit() {
+    try {
+        const items = await api('/audit');
+        document.getElementById('audit').innerHTML =
+            items.map(x =>
+                '<div class="item"><b>' + esc(x.action) +
+                '</b> - ' + esc(x.actor) +
+                '<span class="muted">' +
+                new Date(x.eventTime).toLocaleString() +
+                '</span><p>' + esc(x.details) +
+                ' (Document: ' + (x.documentId ?? '-') +
+                ')</p></div>'
+            ).join('') || '<p>No audit events yet.</p>';
+    } catch (e) {
+        showError(e);
+    }
+}
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[c]));
+}
+</script></body></html>
+
