@@ -12,3 +12,12 @@ target/
 run-log.txt
 *.backup
 *.html.backup
+
+# Local database and generated files
+data/
+target/
+*.mv.db
+*.trace.db
+run-log.txt
+*.backup
+*.html.backup
